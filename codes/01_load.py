@@ -16,4 +16,4 @@ print("uid unique (learn/test):", learn["uid"].is_unique, test["uid"].is_unique)
 print("target in learn/test   :", "target" in learn.columns, "target" in test.columns)
 print("INSEE dtype:", learn["INSEE"].dtype)
 
-#%%
+#%% hola caracola  
