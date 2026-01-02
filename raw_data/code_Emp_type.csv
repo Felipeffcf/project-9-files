@@ -1,0 +1,10 @@
+Code,Libellé
+"cond|1|1","En contrat d'apprentissage ou de professionnalisation"
+"cond|1|2","Placés par une agence d'intérim"
+"cond|1|3","Emplois aidés (contrat unique d'insertion, d'initiative emploi, d'accompagnement dans l'emploi, avenir, etc.)"
+"cond|1|4","Stagiaires rémunérés en entreprise"
+"cond|1|5","Autres emplois à durée limitée, CDD, contrat court, saisonnier, vacataire, etc."
+"cond|1|6","Emplois sans limite de durée, CDI, titulaire de la fonction publique"
+"cond|2|1","Non salariés : Indépendants"
+"cond|2|2","Non salariés : Employeurs"
+"cond|2|3","Non salariés : Aides familiaux"
