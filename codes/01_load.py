@@ -1,13 +1,16 @@
 #%% 
 import pandas as pd
+
 learn = pd.read_csv(
-    r"C:\Users\felif\Desktop\Machine Learning\FINAL PROJECT\project-9-files\raw_data\learn_dataset.csv",
+    "../raw_data/learn_dataset.csv",
     dtype={"INSEE": str}
 )
+
 test = pd.read_csv(
-    r"C:\Users\felif\Desktop\Machine Learning\FINAL PROJECT\project-9-files\raw_data\test_dataset.csv",
+    "../raw_data/test_dataset.csv",
     dtype={"INSEE": str}
 )
+
 
 print("Learn shape:", learn.shape)
 print("Test shape :", test.shape)
