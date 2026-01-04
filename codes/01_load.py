@@ -20,7 +20,7 @@ print("target in learn/test   :", "target" in learn.columns, "target" in test.co
 print("INSEE dtype:", learn["INSEE"].dtype)
 
 #%%
-# codes/01_load.py
+
 import os
 from pathlib import Path
 import pandas as pd
