@@ -100,5 +100,42 @@ def build_geo() -> pd.DataFrame:
         "latitude": "lat",
         "longitude": "lon",
     })
-    geo = geo[["INSEE", "region", "population", "lat", "lon"]]
+    geo = adm.merge(pop, on="INSEE", how="left") \
+        .merge(loc, on="INSEE", how="left")
+    if "POPULATION" in geo.columns:
+        geo = geo.rename(columns={"POPULATION": "population"})
+        geo["log_population"] = np.log1p(geo["population"])
     return geo
+
+# %%
+# Job aggregation (multiple rows --> one row per uid)
+
+def aggregate_job(job: pd.DataFrame) -> pd.DataFrame:
+    if job is None or job.empty:
+        return pd.DataFrame({"uid": []})
+    
+    numeric_cols = ["stipend", "WWORKING_HOURS"]
+    caregorical_cols = [
+        "activity_sector",
+        "type_of_contract",
+        "Occupational_status",
+        "job_condition",
+        "employer_type",
+        "employee_count",
+        "JOB_DEV",
+        "JOB_DESCRIPTION",
+        "PREVIOUS_DEP",
+    ]
+    
+    agg_map = {}
+    
+    for c in numeric_cols:
+        if c in job.columns:
+            agg_map[c] = "mean"
+
+    for c in caregorical_cols:
+        if c in job.columns:
+            agg_map[c] = "first"
+
+    return job.groupby("uid").agg(agg_map).reset_index()
+# %%
