@@ -120,3 +120,129 @@ if __name__ == "__main__":
     main()
 
 #%%
+import os
+from pathlib import Path
+import pandas as pd
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+DEFAULT_DATA_DIR = ROOT / "raw_data"
+DATA_DIR = Path(os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)).resolve()
+
+ARTIFACTS_DIR = ROOT / "artifacts"
+ARTIFACTS_DIR.mkdir(exist_ok=True)
+
+LEARN_MASTER = ARTIFACTS_DIR / "learn_master.csv"
+TEST_MASTER = ARTIFACTS_DIR / "test_master.csv"
+
+def must_exist(path: Path) -> Path:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"File not found:\n  {path}\n\n"
+        )
+    return path
+
+def read_csv(path: Path, **kwargs) -> pd.DataFrame:
+    return pd.read_csv(
+        must_exist(path),
+        **kwargs
+    )
+
+def _find_col(df: pd.DataFrame, candidates):
+    cols = {c.lower() : c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in cols:
+            return cols[cand.lower()]
+    return None
+
+def load_mapping_job_description(): 
+    map_path = DATA_DIR / "code_JOB_DESCRIPTION_map.csv"
+    n2_path = DATA_DIR / "code_JOB_DESCRIPTION_n2.csv"
+    n1_path = DATA_DIR / "code_JOB_DESCRIPTION_n1.csv"
+    
+    if not map_path.exists() or not n2_path.exists():
+        return None, None 
+
+    m = pd.read_csv(map_path)
+    n2 = pd.read_csv(n2_path)
+
+# Infer Columns
+    jd_col = _find_col(m, ["JOB_DESCRIPTION", "job_description", "code", "pcs", "PCS"])
+    n2_col = _find_col(m, ["n2", "N2", "JOB_DESCRIPTION_n2", "code_n2"])
+    
+    n2_code_col = _find_col(n2, ["n2", "N2", "code", "CODE"])
+    n2_label_col = _find_col(n2, ["label", "LABEL", "JOB_DESCRIPTION_n2", "name","NAME"])
+
+    if jd_col is None or n2_col is None or n2_code_col is None :
+        return None, None
+
+# Build mapping
+    jd_to_n2code = dict(
+        zip(m[jd_col].astype(str), m[n2_col].astype(str))
+    )
+
+    if n2_label_col is not None:
+        n2code_to_label = dict(
+            zip(n2[n2_code_col].astype(str), n2[n2_label_col].astype(str))
+        )
+    else:
+        n2code_to_label = {}
+        
+    return jd_to_n2code, n2code_to_label
+
+# n1
+    n1code_to_label = None
+    if n1_path.exists():
+        n1 = pd.read_csv(n1_path)
+        n1_code_col = _find_col(n1, ["n1", "N1", "code", "CODE"])
+        n1_label_col = _find_col(n1, ["label", "LABEL", "name","NAME"])
+        if n1_code_col is not None and n1_label_col is not None:
+            n1code_to_label = dict(
+                zip(n1[n1_code_col].astype(str), n1[n1_label_col].astype(str))
+            )
+
+def apply_job_description_mapping( df: pd.DataFrame, col: str, jd_to_n2code, n2code_to_label, out_col: str):
+    s = df[col].astype("string")
+    n2code = s.map(lambda x: jd_to_n2code.get(str(x), None) if pd.notna(x) else None)
+    
+    if n2code_to_label:
+        n2label = n2code.map(lambda x: n2code_to_label.get(str(x), str(x)) if pd.notna(x) else None)
+        df[out_col] = n2label
+    else:
+        df[out_col] = n2code
+    return df
+
+def main():
+    learn = read_csv(LEARN_MASTER)
+    test = read_csv(TEST_MASTER)
+    
+    jd_to_n2code, n2code_to_label = load_mapping_job_description()
+    
+    if jd_to_n2code is not None:
+        if "JOB_DESCRIPTION" in learn.columns:
+            learn = apply_job_description_mapping(learn, "JOB_DESCRIPTION", jd_to_n2code, n2code_to_label, "JOB_DESCRIPTION_n2")
+            test = apply_job_description_mapping(test, "JOB_DESCRIPTION", jd_to_n2code, n2code_to_label, "JOB_DESCRIPTION_n2")
+            
+        if "Previous_JOB_DESCRIPTION" in learn.columns:
+            learn = apply_job_description_mapping(learn, "Previous_JOB_DESCRIPTION", jd_to_n2code, n2code_to_label, "Previous_JOB_DESCRIPTION_n2")
+            test = apply_job_description_mapping(test, "Previous_JOB_DESCRIPTION", jd_to_n2code, n2code_to_label, "Previous_JOB_DESCRIPTION_n2")
+        
+        drop_raw = [c for c in ["JOB_DESCRIPTION", "Previous_JOB_DESCRIPTION"] if c in learn.columns]
+        learn = learn.drop(columns=drop_raw, errors="ignore")
+        test = test.drop(columns=drop_raw, errors="ignore")
+        
+        print ("Applied JOB_DESCRIPTION mapping to n2 and dropped raw columns.")
+    else:
+        print ("JOB_DESCRIPTION mapping files not found or not understood. Keeping raw codes (may be high cardinality).")
+
+# Save final datasets
+    learn.to_csv(ARTIFACTS_DIR / "learn_final.csv", index=False)
+    test.to_csv(ARTIFACTS_DIR / "test_final.csv", index=False)
+    
+    print ("Saved")
+    print ("", ARTIFACTS_DIR / "learn_final.csv")
+    print ("", ARTIFACTS_DIR / "test_final.csv")
+    
+if __name__ == "__main__":
+    main()
+#%%
