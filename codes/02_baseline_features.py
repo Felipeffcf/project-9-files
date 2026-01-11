@@ -1,4 +1,4 @@
-#%% 
+#%%
 import os
 from pathlib import Path
 import pandas as pd
@@ -39,7 +39,71 @@ def left_join(base: pd.DataFrame, other: pd.DataFrame, on: str) -> pd.DataFrame:
     return base.merge(other, how="left", on=on)
 
 
+# -----------------------------
+# JOB_DESCRIPTION mapping (Option 2)
+# -----------------------------
+def find_col(df: pd.DataFrame, candidates):
+    cols = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in cols:
+            return cols[cand.lower()]
+    return None
+
+
+def load_job_description_mapping(data_dir: Path):
+    """
+    Loads mapping:
+      JOB_DESCRIPTION code -> n2 code (from code_JOB_DESCRIPTION_map.csv)
+      n2 code -> label (from code_JOB_DESCRIPTION_n2.csv, if label column exists)
+    Returns (jd_to_n2, n2_to_label) or (None, None) if files/columns not found.
+    """
+    map_path = data_dir / "code_JOB_DESCRIPTION_map.csv"
+    n2_path = data_dir / "code_JOB_DESCRIPTION_n2.csv"
+
+    if not map_path.exists() or not n2_path.exists():
+        return None, None
+
+    m = pd.read_csv(map_path)
+    n2 = pd.read_csv(n2_path)
+
+    jd_col = find_col(m, ["JOB_DESCRIPTION", "job_description", "code", "pcs", "PCS"])
+    n2_col = find_col(m, ["n2", "N2", "JOB_DESCRIPTION_n2", "code_n2"])
+
+    n2_code_col = find_col(n2, ["n2", "N2", "code", "CODE"])
+    n2_label_col = find_col(n2, ["label", "LABEL", "name", "NAME", "JOB_DESCRIPTION_n2"])
+
+    if jd_col is None or n2_col is None or n2_code_col is None:
+        return None, None
+
+    jd_to_n2 = dict(zip(m[jd_col].astype(str), m[n2_col].astype(str)))
+
+    if n2_label_col is not None:
+        n2_to_label = dict(zip(n2[n2_code_col].astype(str), n2[n2_label_col].astype(str)))
+    else:
+        n2_to_label = {}
+
+    return jd_to_n2, n2_to_label
+
+
+def apply_job_mapping(df: pd.DataFrame, col: str, jd_to_n2: dict, n2_to_label: dict, out_col: str):
+    """
+    Adds out_col as mapped n2 category (label if available, otherwise code).
+    Keeps None/NaN if original is missing or mapping not found.
+    """
+    s = df[col].astype("string")
+    n2_code = s.map(lambda x: jd_to_n2.get(str(x), None) if pd.notna(x) else None)
+
+    if n2_to_label:
+        df[out_col] = n2_code.map(lambda x: n2_to_label.get(str(x), str(x)) if pd.notna(x) else None)
+    else:
+        df[out_col] = n2_code
+
+    return df
+
+
+# -----------------------------
 # Geography table (INSEE --> region, population, coords)
+# -----------------------------
 def build_geo() -> pd.DataFrame:
     adm = read_csv("city_adm.csv")
     pop = read_csv("city_pop.csv")
@@ -59,14 +123,16 @@ def build_geo() -> pd.DataFrame:
     if "population" in geo.columns:
         geo["log_population"] = np.log1p(geo["population"])
 
-    # ✅ FIX 1: prevent INSEE duplicates from creating duplication on merge
+    # prevent INSEE duplicates from creating duplication on merge
     if "INSEE" in geo.columns:
         geo = geo.drop_duplicates(subset=["INSEE"])
 
     return geo
 
 
+# -----------------------------
 # Job aggregation (multiple rows --> one row per uid)
+# -----------------------------
 def mode_or_first(series: pd.Series):
     s = series.dropna()
     if s.empty:
@@ -81,7 +147,6 @@ def aggregate_job(job: pd.DataFrame) -> pd.DataFrame:
     if job is None or job.empty:
         return pd.DataFrame({"uid": []})
 
-    # ✅ FIX 2: WORKING_HOURS spelling
     numeric_cols = ["stipend", "WORKING_HOURS"]
 
     categorical_cols = [
@@ -97,17 +162,14 @@ def aggregate_job(job: pd.DataFrame) -> pd.DataFrame:
 
     agg_map = {}
 
-    # Numeric: average across multiple rows per uid
     for c in numeric_cols:
         if c in job.columns:
             agg_map[c] = "mean"
 
-    # ✅ FIX 3: correctly loop over categorical columns (indentation + variable)
     for c in categorical_cols:
         if c in job.columns:
             agg_map[c] = mode_or_first
 
-    # If for some reason no expected cols are present, return unique uids
     if not agg_map:
         return job[["uid"]].drop_duplicates()
 
@@ -118,7 +180,6 @@ def aggregate_retired_last_job(retired_jobs: pd.DataFrame) -> pd.DataFrame:
     if retired_jobs is None or retired_jobs.empty:
         return pd.DataFrame({"uid": []})
 
-    # We keep only the columns that exist
     keep = ["uid"]
     candidates = [
         "Previous_JOB_DESCRIPTION",
@@ -132,11 +193,9 @@ def aggregate_retired_last_job(retired_jobs: pd.DataFrame) -> pd.DataFrame:
             keep.append(col)
     df = retired_jobs[keep].copy()
 
-    # If already one row per uid, return as is
     if df["uid"].is_unique:
         return df
 
-    # otherwise, aggregate deterministically
     agg = {"uid": "first"}
     for col in keep:
         if col != "uid":
@@ -144,24 +203,22 @@ def aggregate_retired_last_job(retired_jobs: pd.DataFrame) -> pd.DataFrame:
     return df.groupby("uid", as_index=False).agg(agg)
 
 
+# -----------------------------
 # Build Master Dataset (one row per person)
+# -----------------------------
 def build_master(split: str, geo: pd.DataFrame) -> pd.DataFrame:
     assert split in ["learn", "test"], "split must be 'learn' or 'test'"
 
-    # --- Core persons table ---
     core = read_csv(f"{split}_dataset.csv")
 
-    # --- Employment type ---
     emp = read_csv(f"{split}_dataset_Emp_type.csv")
     core = left_join(core, emp, on="uid")
     core["has_emp_type"] = core["Emp_type"].notna().astype(int) if "Emp_type" in core.columns else 0
 
-    # --- Job tables (employees only) ---
     job = read_csv(f"{split}_dataset_job.csv")
     job_agg = aggregate_job(job)
     core = left_join(core, job_agg, on="uid")
 
-    # Employee indicator (has at least one job record)
     if "stipend" in core.columns:
         core["is_employee"] = core["stipend"].notna().astype(int)
     elif "JOB_DESCRIPTION" in core.columns:
@@ -169,7 +226,6 @@ def build_master(split: str, geo: pd.DataFrame) -> pd.DataFrame:
     else:
         core["is_employee"] = 0
 
-    # --- Retired former & jobs tables ---
     retired_former = read_csv(f"{split}_dataset_retired_former.csv")
     core = left_join(core, retired_former, on="uid")
     core["is_retired"] = core["retirement_age"].notna().astype(int) if "retirement_age" in core.columns else 0
@@ -178,12 +234,10 @@ def build_master(split: str, geo: pd.DataFrame) -> pd.DataFrame:
     retired_jobs = aggregate_retired_last_job(retired_jobs_raw)
     core = left_join(core, retired_jobs, on="uid")
 
-    # --- Pension ---
     pension = read_csv(f"{split}_dataset_retired_pension.csv")
     core = left_join(core, pension, on="uid")
     core["has_pension"] = core["pension_amount"].notna().astype(int) if "pension_amount" in core.columns else 0
 
-    # --- Sports ---
     sports = read_csv(f"{split}_dataset_sport.csv")
     core = left_join(core, sports, on="uid")
     if "SPORTS" in core.columns:
@@ -192,11 +246,9 @@ def build_master(split: str, geo: pd.DataFrame) -> pd.DataFrame:
     else:
         core["has_sports"] = 0
 
-    # --- Geography ---
     if "INSEE" in core.columns:
         core = left_join(core, geo, on="INSEE")
 
-    # --- Final safety: ensure one row per uid ---
     if core["uid"].duplicated().any():
         core = core.drop_duplicates(subset=["uid"], keep="first")
 
@@ -218,6 +270,9 @@ def quick_checks(df: pd.DataFrame, name: str):
         "pension_amount",
         "SPORTS",
         "population",
+        "log_population",
+        "JOB_DESCRIPTION_n2",
+        "Previous_JOB_DESCRIPTION_n2",
         "X",
         "Y",
     ]
@@ -236,6 +291,31 @@ def main():
     learn_master = build_master("learn", geo)
     test_master = build_master("test", geo)
 
+    # ✅ Apply JOB_DESCRIPTION simplification (n2 mapping)
+    jd_to_n2, n2_to_label = load_job_description_mapping(DATA_DIR)
+
+    if jd_to_n2 is not None:
+        if "JOB_DESCRIPTION" in learn_master.columns:
+            learn_master = apply_job_mapping(learn_master, "JOB_DESCRIPTION", jd_to_n2, n2_to_label, "JOB_DESCRIPTION_n2")
+            test_master = apply_job_mapping(test_master, "JOB_DESCRIPTION", jd_to_n2, n2_to_label, "JOB_DESCRIPTION_n2")
+
+        if "Previous_JOB_DESCRIPTION" in learn_master.columns:
+            learn_master = apply_job_mapping(
+                learn_master, "Previous_JOB_DESCRIPTION", jd_to_n2, n2_to_label, "Previous_JOB_DESCRIPTION_n2"
+            )
+            test_master = apply_job_mapping(
+                test_master, "Previous_JOB_DESCRIPTION", jd_to_n2, n2_to_label, "Previous_JOB_DESCRIPTION_n2"
+            )
+
+        # Drop raw high-cardinality columns to avoid huge OneHot matrices
+        drop_raw = [c for c in ["JOB_DESCRIPTION", "Previous_JOB_DESCRIPTION"] if c in learn_master.columns]
+        learn_master = learn_master.drop(columns=drop_raw, errors="ignore")
+        test_master = test_master.drop(columns=drop_raw, errors="ignore")
+
+        print("✅ JOB_DESCRIPTION mapped to n2 and raw columns dropped.")
+    else:
+        print("⚠️ JOB_DESCRIPTION mapping files not found; keeping raw JOB_DESCRIPTION codes.")
+
     quick_checks(learn_master, "Learn Master Dataset")
     quick_checks(test_master, "Test Master Dataset")
 
@@ -252,4 +332,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# %%
+#%%

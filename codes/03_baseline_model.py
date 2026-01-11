@@ -1,4 +1,4 @@
-#%%
+#%% 
 import os
 from pathlib import Path
 import pandas as pd
@@ -19,15 +19,25 @@ ARTIFACTS_DIR = ROOT / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
 LEARN_MASTER = Path(os.environ.get("LEARN_MASTER", ARTIFACTS_DIR / "learn_master.csv")).resolve()
-TEST_MASTER = Path(os.environ.get("TEST_MASTER", ARTIFACTS_DIR / "test_master.csv")).resolve()
-PRED_PATH = Path(os.environ.get("PRED_PATH", ROOT / "predictions.csv")).resolve()
+TEST_MASTER  = Path(os.environ.get("TEST_MASTER",  ARTIFACTS_DIR / "test_master.csv")).resolve()
+PRED_PATH    = Path(os.environ.get("PRED_PATH", ROOT / "predictions.csv")).resolve()
 
-SUBSAMPLE_N = 15000
-N_JOBS = -1
-VERBOSE = 2
+# Debug knobs
+SUBSAMPLE_N = 15000   # set None to use full data
+N_JOBS = -1           # -1 uses all cores
+VERBOSE = 2           # GridSearch verbosity
 
-# If your positive class in the original data is 'X', set it here to output 0/1 predictions:
-POSITIVE_LABEL = "X"  # change if needed (e.g., "1"). If None, will output original labels via inverse_transform.
+# If your positive class in the original data is 'X', keep this to output 0/1 predictions.
+# If None, will output the original labels via inverse_transform.
+POSITIVE_LABEL = "X"
+
+
+def make_ohe():
+    # Compatibility across scikit-learn versions
+    try:
+        return OneHotEncoder(handle_unknown="ignore", sparse_output=True)
+    except TypeError:
+        return OneHotEncoder(handle_unknown="ignore", sparse=True)
 
 
 def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
@@ -41,7 +51,7 @@ def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
     cat_pipe = Pipeline([
         ("to_str", FunctionTransformer(lambda x: x.astype(str))),
         ("imputer", SimpleImputer(strategy="constant", fill_value="MISSING")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=True)),
+        ("onehot", make_ohe()),
     ])
 
     return ColumnTransformer(
@@ -60,7 +70,7 @@ def main():
         raise FileNotFoundError(f"Test master dataset not found: {TEST_MASTER}")
 
     learn = pd.read_csv(LEARN_MASTER, dtype={"INSEE": str})
-    test = pd.read_csv(TEST_MASTER, dtype={"INSEE": str})
+    test  = pd.read_csv(TEST_MASTER,  dtype={"INSEE": str})
 
     if "target" not in learn.columns:
         raise ValueError("learn_master.csv must contain 'target' column.")
@@ -72,6 +82,15 @@ def main():
     le = LabelEncoder()
     y = le.fit_transform(y_raw)
 
+    print("Target classes:", list(le.classes_), flush=True)
+    if POSITIVE_LABEL is not None and POSITIVE_LABEL not in list(le.classes_):
+        print(
+            f"WARNING: POSITIVE_LABEL='{POSITIVE_LABEL}' not found in classes. "
+            "Predictions will be saved as original labels (not 0/1).",
+            flush=True
+        )
+
+    # Features
     X = learn.drop(columns=["target", "uid"], errors="ignore")
     X_test = test.drop(columns=["uid"], errors="ignore")
     test_uids = test["uid"].copy()
@@ -84,6 +103,7 @@ def main():
         print(f"Using subsample n={SUBSAMPLE_N}. X shape: {X.shape}", flush=True)
 
     pre = make_preprocessor(X)
+
     clf = RandomForestClassifier(
         random_state=42,
         n_jobs=N_JOBS,
@@ -95,14 +115,16 @@ def main():
         ("rf", clf),
     ])
 
+    # ✅ Reduced grid to avoid extremely long runtimes
     param_grid = {
-        "rf__n_estimators": [300, 600],
-        "rf__max_depth": [None, 20, 40],
-        "rf__min_samples_leaf": [1, 5, 15],
-        "rf__max_features": ["sqrt", 0.4, 0.7],
+        "rf__n_estimators": [300],
+        "rf__max_depth": [None, 20],
+        "rf__min_samples_leaf": [1, 5],
+        "rf__max_features": ["sqrt", 0.7],
     }
 
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # ✅ Reduced folds to speed up while still using resampling (mandatory)
+    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
 
     gs = GridSearchCV(
         pipe,
@@ -121,7 +143,7 @@ def main():
     print("Best params:", gs.best_params_, flush=True)
     best_model = gs.best_estimator_
 
-    # Holdout check
+    # Holdout check (optional, for sanity)
     Xtr, Xte, ytr, yte = train_test_split(
         X, y, test_size=0.2, stratify=y, random_state=42
     )
@@ -148,10 +170,7 @@ def main():
     else:
         pred_test_out = pred_test_labels
 
-    pred_df = pd.DataFrame({
-        "uid": test_uids,
-        "target": pred_test_out
-    })
+    pred_df = pd.DataFrame({"uid": test_uids, "target": pred_test_out})
     pred_df.to_csv(PRED_PATH, index=False)
     print(f"\nSaved predictions to: {PRED_PATH}", flush=True)
 
@@ -163,4 +182,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 # %%
