@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 
+from matplotlib import cm
 import numpy as np
 import pandas as pd
 import joblib
@@ -129,6 +130,7 @@ def main():
 
     gs.fit(X, y)
     best_model = gs.best_estimator_
+    print(f"Best CV macro-F1: {gs.best_score_:.4f}")
 
     Xtr, Xte, ytr, yte = train_test_split(
         X, y, test_size=0.2, stratify=y, random_state=42
@@ -136,10 +138,18 @@ def main():
     best_model.fit(Xtr, ytr)
     pred_hold = best_model.predict(Xte)
 
-    _ = accuracy_score(yte, pred_hold)
-    _ = f1_score(yte, pred_hold, average="macro")
-    _ = confusion_matrix(yte, pred_hold)
-    _ = classification_report(yte, pred_hold)
+    acc = accuracy_score(yte, pred_hold)
+    f1m = f1_score(yte, pred_hold, average="macro")
+    cm = confusion_matrix(yte, pred_hold)
+    rep = classification_report(yte, pred_hold)
+
+    print("\n=== Hold-out validation results ===")
+    print(f"Accuracy: {acc:.4f}")
+    print(f"Macro F1: {f1m:.4f}")
+    print("\nConfusion matrix:")
+    print(cm)
+    print("\nClassification report:")
+    print(rep)
 
     best_model.fit(X, y)
     pred_test_enc = best_model.predict(X_test)
