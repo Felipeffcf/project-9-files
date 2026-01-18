@@ -1,9 +1,11 @@
-#%%
+# Baseline feature engineering script
+# Imports
 import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
 
+# Directory paths
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 DEFAULT_DATA_DIR = ROOT / "raw_data"
@@ -12,7 +14,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)).resolve()
 CTS_DIR = ROOT / "artifacts"
 CTS_DIR.mkdir(exist_ok=True)
 
-
+# Helper functions
 def must_exist(path: Path) -> Path:
     if not path.exists():
         raise FileNotFoundError(
@@ -25,30 +27,23 @@ def must_exist(path: Path) -> Path:
         )
     return path
 
-
 def read_csv(name: str, **kwargs) -> pd.DataFrame:
     df = pd.read_csv(must_exist(DATA_DIR / name), **kwargs)
     if "INSEE" in df.columns:
         df["INSEE"] = df["INSEE"].astype("string")
     return df
 
-
 def left_join(base: pd.DataFrame, other: pd.DataFrame, on: str) -> pd.DataFrame:
     if other is None or other.empty:
         return base
     return base.merge(other, how="left", on=on)
 
-
-# -----------------------------
-# JOB_DESCRIPTION mapping (Option 2)
-# -----------------------------
 def find_col(df: pd.DataFrame, candidates):
     cols = {c.lower(): c for c in df.columns}
     for cand in candidates:
         if cand.lower() in cols:
             return cols[cand.lower()]
     return None
-
 
 def load_job_description_mapping(data_dir: Path):
     """
@@ -57,12 +52,14 @@ def load_job_description_mapping(data_dir: Path):
       n2 code -> label (from code_JOB_DESCRIPTION_n2.csv, if label column exists)
     Returns (jd_to_n2, n2_to_label) or (None, None) if files/columns not found.
     """
+    # Load mapping files
     map_path = data_dir / "code_JOB_DESCRIPTION_map.csv"
     n2_path = data_dir / "code_JOB_DESCRIPTION_n2.csv"
 
     if not map_path.exists() or not n2_path.exists():
         return None, None
 
+    # Read mapping files
     m = pd.read_csv(map_path)
     n2 = pd.read_csv(n2_path)
 
@@ -84,7 +81,6 @@ def load_job_description_mapping(data_dir: Path):
 
     return jd_to_n2, n2_to_label
 
-
 def apply_job_mapping(df: pd.DataFrame, col: str, jd_to_n2: dict, n2_to_label: dict, out_col: str):
     """
     Adds out_col as mapped n2 category (label if available, otherwise code).
@@ -100,10 +96,7 @@ def apply_job_mapping(df: pd.DataFrame, col: str, jd_to_n2: dict, n2_to_label: d
 
     return df
 
-
-# -----------------------------
 # Geography table (INSEE --> region, population, coords)
-# -----------------------------
 def build_geo() -> pd.DataFrame:
     adm = read_csv("city_adm.csv")
     pop = read_csv("city_pop.csv")
@@ -129,10 +122,7 @@ def build_geo() -> pd.DataFrame:
 
     return geo
 
-
-# -----------------------------
-# Job aggregation (multiple rows --> one row per uid)
-# -----------------------------
+# Job aggregation (from multiple rows to one row per uid)
 def mode_or_first(series: pd.Series):
     s = series.dropna()
     if s.empty:
@@ -141,7 +131,6 @@ def mode_or_first(series: pd.Series):
     if len(m) > 0:
         return m.iloc[0]
     return s.iloc[0]
-
 
 def aggregate_job(job: pd.DataFrame) -> pd.DataFrame:
     if job is None or job.empty:
@@ -175,7 +164,6 @@ def aggregate_job(job: pd.DataFrame) -> pd.DataFrame:
 
     return job.groupby("uid", as_index=False).agg(agg_map)
 
-
 def aggregate_retired_last_job(retired_jobs: pd.DataFrame) -> pd.DataFrame:
     if retired_jobs is None or retired_jobs.empty:
         return pd.DataFrame({"uid": []})
@@ -202,10 +190,7 @@ def aggregate_retired_last_job(retired_jobs: pd.DataFrame) -> pd.DataFrame:
             agg[col] = mode_or_first
     return df.groupby("uid", as_index=False).agg(agg)
 
-
-# -----------------------------
 # Build Master Dataset (one row per person)
-# -----------------------------
 def build_master(split: str, geo: pd.DataFrame) -> pd.DataFrame:
     assert split in ["learn", "test"], "split must be 'learn' or 'test'"
 
@@ -254,7 +239,6 @@ def build_master(split: str, geo: pd.DataFrame) -> pd.DataFrame:
 
     return core
 
-
 def quick_checks(df: pd.DataFrame, name: str):
     print(f"\n== {name} ==")
     print("Shape:", df.shape)
@@ -281,7 +265,6 @@ def quick_checks(df: pd.DataFrame, name: str):
             n_missing = df[col].isna().sum()
             print(f"Column '{col}': missing values = {n_missing} ({n_missing / len(df):.2%})")
 
-
 def main():
     print("Project ROOT:", ROOT)
     print("Using DATA_DIR:", DATA_DIR)
@@ -291,7 +274,7 @@ def main():
     learn_master = build_master("learn", geo)
     test_master = build_master("test", geo)
 
-    # ✅ Apply JOB_DESCRIPTION simplification (n2 mapping)
+    # Apply JOB_DESCRIPTION simplification (n2 mapping)
     jd_to_n2, n2_to_label = load_job_description_mapping(DATA_DIR)
 
     if jd_to_n2 is not None:
@@ -328,8 +311,5 @@ def main():
     print("", learn_path)
     print("", test_path)
 
-
 if __name__ == "__main__":
     main()
-
-#%%

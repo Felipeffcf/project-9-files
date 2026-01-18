@@ -1,13 +1,15 @@
-#%%
+# Imports
 import os
 from pathlib import Path
 import pandas as pd
 
+# Directory paths
 HERE = Path(__file__).resolve().parent      
 ROOT = HERE.parent                          
 DEFAULT_DATA_DIR = ROOT / "raw_data"
 DATA_DIR = Path(os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)).resolve()
 
+# Helper functions
 def must_exist(path: Path) -> Path:
     if not path.exists():
         raise FileNotFoundError(
@@ -55,6 +57,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# %%
